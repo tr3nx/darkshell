@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>darkshell</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1">
+		<link rel="stylesheet" href="assets/styles.css">
+	</head>
+	<body>
+		<div :class="theme" class="screen" id="screen">
+			<desktop></desktop>
+			<taskbar></taskbar>
+			<window-manager></window-manager>
+		</div>
+
+		<script type="text/template" id="terminal-template">
+			<div class="terminal">
+				<div class="outputs" ref="outputs">
+					<p v-for="h in history" v-text="h.buffer"></p>
+				</div>
+				<div class="prompt">
+					<span class="symbol" v-text="symbol"></span>
+					<input type="text" ref="prompt" v-model="prompt" v-on:keyup.enter="processPrompt">
+				</div>
+			</div>
+		</script>
+
+		<script type="text/template" id="window-manager-template">
+			<div class="window-manager">
+				<window
+					v-for="win in windows"
+					v-if="!win.closed"
+					:key="win.id"
+					:id="win.id"
+					:name="win.name"
+					:label="win.label"
+					:size="win.size"
+					:pos="win.pos"
+					:focus="win.focus"
+					:dragging="win.dragging"
+					:minimized="win.minimized"
+					:maximized="win.maximized"
+					:closed="win.closed"
+				>
+					<component :is="win.name"></component>
+				</window>
+			</div>
+		</script>
+
+		<script type="text/template" id="taskbar-template">
+			<div class="taskbar" ref="taskbar">
+				<div class="menu-cont" :class="{ 'is-open' : isMenuOpen }">
+					<div class="menu-items">
+						<button>Terminal</button>
+						<button>Networks</button>
+						<hr>
+						<button>Logout</button>
+					</div>
+				</div>
+				<div class="task-list">
+					<button class="is-menu" :class="{ 'is-open' : isMenuOpen }" @click="menuClick()" v-text="menuLabel"></button>
+					<button v-for="win in windows" :key="win.id" v-if="!win.closed" :disabled="win.focus" :class="{ 'is-minimized' : win.minimized, 'is-maximized' : win.maximized, 'is-focus' : win.focus }" @click="taskClick(win)" v-text="win.label"></button>
+				</div>
+			</div>
+		</script>
+
+		<script type="text/template" id="window-template">
+			<section class="window" :class="{ 'is-minimized' : minimized, 'is-maximized' : maximized, 'is-focus' : focus, 'is-dragging' : dragging }" :style="styleString">
+				<div class="handle">
+					<div class="label" ref="label" v-text="label"></div>
+					<div class="actions">
+						<button class="minimize" @click="minimize"></button>
+						<button class="maximize" @click="maximize"></button>
+						<button class="close" @click="close"></button>
+					</div>
+				</div>
+				<div class="frame" @click="frameClick">
+					<slot></slot>
+				</div>
+				<div class="resize-bottom">
+					<div class="resizer bottom-center" ref="resizebottom"></div>
+					<div class="resizer bottom-right" ref="resizebottomright"></div>
+				</div>
+			</section>
+		</script>
+
+		<script type="text/template" id="networks-template">
+			<div class="networks">
+				<div class="quick-actions">
+					<button @click="networksAdd" class="networksAdd">Add Network</button>
+					<button @click="scannersRemoveAll"  class="removeScanners">Remove Scanners</button>
+				</div>
+				<ul class="details">
+					<li><span class="label">Networks:</span> <span v-text="networks.length"></span></li>
+					<li><span class="label">Scanners:</span> <span class="unassigned" v-text="unassigned()"></span> / <span class="total" v-text="scanners.length"></span></li>
+				</ul>
+				<div class="network-list">
+					<div class="network" v-for="net in networks" :class="{ 'is-connected' : net.connected }" :key="net.name">
+						<div class="label" v-text="net.label"></div>
+						<progress :value="assigned(net.id)" :max="scanners.length"></progress>
+						<div class="actions">
+							<button :disabled="!assigned(net.id)" @click="remove(net.id)" class="remove">
+								<i>-</i>
+							</button>
+							<span class="assigned" v-text="assigned(net.id)"></span>
+							<button :disabled="unassigned() === 0" @click="add(net.id)" class="add">
+								<i>+</i>
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</script>
+
+		<script type="text/template" id="emails-template">
+			<div class="emails">
+				<div class="email-list">
+					<button v-for="e in emails" @click="read(e)"><span v-text="e.subject"></span></button>
+				</div>
+				<div class="email-messages" v-if="reading">
+					<ul class="heading">
+						<li class="from">
+							<span class="label">From:</span>
+							<span class="value" v-text="reading.from"></span>
+						</li>
+						<li class="to">
+							<span class="label">To:</span>
+							<span class="value" v-text="reading.to"></span>
+						</li>
+						<li class="subject">
+							<span class="label">Subject:</span>
+							<span class="value" v-text="reading.subject"></span>
+						</li>
+						<li class="timestamp">
+							<span class="label">Timestamp:</span>
+							<span class="value" v-text="reading.timestamp"></span>
+						</li>
+					</ul>
+					<p v-text="reading.body"></p>
+				</div>
+			</div>
+		</script>
+
+		<script type="text/template" id="irc-template">
+			<div class="irc">
+				irc?
+			</div>
+		</script>
+
+		<script type="text/template" id="file-browser-template">
+			<div class="file-browser">
+				<table class="files">
+					<thead>
+						<tr v-if="files.length">
+							<td v-for="f in fields">
+								<span class="label">{{f.label}}</span>
+								<!-- <button class="sort-by" @click="sortBy(f.schemaName)" :ref="`sort${f.schemaName}`">
+									V
+								</button> -->
+							</td>
+						</tr>
+					</thead>
+					<tbody>
+						<tr v-for="file in files">
+							<td v-text="file.id"></td>
+							<td v-text="file.filename"></td>
+							<td v-text="file.size"></td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</script>
+
+		<script type="text/template" id="desktop-template">
+			<div class="desktop" @click="desktopClick">
+				<div class="icons">
+					<button class="icon" v-for="i in icons">
+						<span class="label">{{i.label}}</span>
+					</button>
+				</div>
+			</div>
+		</script>
+
+		<script type="text/template" id="login-template">
+			<div class="login">
+				<form>
+					<div class="field">
+						<label for="username">Username:</label>
+						<input name="username" v-model="username">
+					</div>
+					<div class="field">
+						<label for="password">Password:</label>
+						<input name="password" v-model="password">
+					</div>
+					<div class="field">
+						<button class="login" @click="loginClick">Login</button>
+					</div>
+				</form>
+			</div>
+		</script>
+
+		<script src="assets/vue.js"></script>
+		<script src="assets/scripts.js"></script>
+	</body>
+</html>
